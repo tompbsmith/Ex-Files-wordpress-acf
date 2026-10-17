@@ -24,9 +24,9 @@ add_filter(
 
 /*
  * Auto-sync: when a field group JSON file in the theme is newer than its copy in
- * the database (e.g. after a Git deploy), import it so the admin matches the repo.
- * Field groups with no database copy are left alone; they already load straight
- * from the JSON. The repo is the source of truth.
+ * the database (e.g. after a Git deploy, or an edit to the JSON), import it so the
+ * admin matches the repo. New field groups with no database copy are imported too.
+ * The repo is the source of truth.
  */
 add_action( 'admin_init', 'exf_auto_sync_field_groups' );
 
@@ -70,21 +70,21 @@ function exf_auto_sync_field_groups() {
 			continue;
 		}
 
-		$post = acf_get_field_group_post( $group['key'] );
-		if ( ! $post ) {
-			continue; // Not in the database: ACF uses the JSON directly.
-		}
-
-		// Compare against the JSON version this site last saved or synced. Fall back to
-		// the database timestamp the first time.
+		$post          = acf_get_field_group_post( $group['key'] );
 		$json_modified = (int) $group['modified'];
-		$baseline      = isset( $seen[ $group['key'] ] ) ? (int) $seen[ $group['key'] ] : (int) get_post_modified_time( 'U', true, $post );
-		if ( $json_modified <= $baseline ) {
-			continue; // Already up to date.
+
+		if ( $post ) {
+			// Compare against the JSON version this site last saved or synced. Fall back to
+			// the database timestamp the first time.
+			$baseline = isset( $seen[ $group['key'] ] ) ? (int) $seen[ $group['key'] ] : (int) get_post_modified_time( 'U', true, $post );
+			if ( $json_modified <= $baseline ) {
+				continue; // Already up to date.
+			}
+			$group['ID'] = $post->ID;
 		}
+		// No database copy yet (a new field group): import it so it shows in the admin.
 
 		// Same as ACF's own "Sync" action, without rewriting the JSON file.
-		$group['ID'] = $post->ID;
 		$json_enabled = acf_get_setting( 'json' );
 		acf_update_setting( 'json', false );
 		acf_import_field_group( $group );
