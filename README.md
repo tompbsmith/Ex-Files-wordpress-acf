@@ -54,7 +54,8 @@ The form posts to `admin-ajax.php` (action `exf_contact`) and sends a plain-text
 
 ## Developing
 
-- Field groups are stored as JSON in `acf-json/` and loaded automatically. If you change fields in **ACF → Field Groups**, the JSON is re-saved into the theme, so commit it. If WordPress shows "Sync available", click it to pull the theme's JSON into the database.
+- Field groups are stored as JSON in `acf-json/` and loaded automatically. Edit them on a local copy of the site (e.g. Local, with the theme folder cloned from this repo). Saving a field group re-writes its JSON in the theme, so commit and push it.
+- **Auto-sync:** when a deploy brings in field group JSON that's newer than a site's database copy, the theme imports it the next time an admin page loads. A notice says "Field groups updated from the theme". The repo is the source of truth, so don't edit field groups directly on the deployed sites.
 - Section templates are in `template-parts/sections/<layout>.php`. To add a new section, add a layout to the "Sections" flexible content field and create a matching template file.
 - Styles are in `assets/css/main.css`, carried over from the original site. Scripts are in `assets/js/main.js` (menu, hero video loader, contact form).
 

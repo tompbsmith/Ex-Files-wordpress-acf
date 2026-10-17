@@ -22,6 +22,127 @@ add_filter(
 	}
 );
 
+/*
+ * Auto-sync: when a field group JSON file in the theme is newer than its copy in
+ * the database (e.g. after a Git deploy), import it so the admin matches the repo.
+ * Field groups with no database copy are left alone; they already load straight
+ * from the JSON. The repo is the source of truth.
+ */
+add_action( 'admin_init', 'exf_auto_sync_field_groups' );
+
+/**
+ * Import newer field group JSON from the theme into the database.
+ */
+function exf_auto_sync_field_groups() {
+	if ( wp_doing_ajax() || ! current_user_can( 'manage_options' ) ) {
+		return;
+	}
+	if ( ! function_exists( 'acf_get_field_group_post' ) || ! function_exists( 'acf_import_field_group' ) ) {
+		return;
+	}
+
+	$files = glob( EXF_DIR . '/acf-json/group_*.json' );
+	if ( ! $files ) {
+		return;
+	}
+
+	// Skip the work entirely unless a JSON file has changed since the last check.
+	$signature = md5(
+		implode(
+			'|',
+			array_map(
+				function ( $file ) {
+					return $file . ':' . filemtime( $file ) . ':' . filesize( $file );
+				},
+				$files
+			)
+		)
+	);
+	if ( get_option( 'exf_acf_json_signature' ) === $signature ) {
+		return;
+	}
+
+	$synced = array();
+	$seen   = (array) get_option( 'exf_acf_json_seen', array() );
+	foreach ( $files as $file ) {
+		$group = json_decode( (string) file_get_contents( $file ), true ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents
+		if ( ! is_array( $group ) || empty( $group['key'] ) || empty( $group['modified'] ) ) {
+			continue;
+		}
+
+		$post = acf_get_field_group_post( $group['key'] );
+		if ( ! $post ) {
+			continue; // Not in the database: ACF uses the JSON directly.
+		}
+
+		// Compare against the JSON version this site last saved or synced. Fall back to
+		// the database timestamp the first time.
+		$json_modified = (int) $group['modified'];
+		$baseline      = isset( $seen[ $group['key'] ] ) ? (int) $seen[ $group['key'] ] : (int) get_post_modified_time( 'U', true, $post );
+		if ( $json_modified <= $baseline ) {
+			continue; // Already up to date.
+		}
+
+		// Same as ACF's own "Sync" action, without rewriting the JSON file.
+		$group['ID'] = $post->ID;
+		$json_enabled = acf_get_setting( 'json' );
+		acf_update_setting( 'json', false );
+		acf_import_field_group( $group );
+		acf_update_setting( 'json', $json_enabled );
+
+		$seen[ $group['key'] ] = $json_modified;
+		$synced[]              = $group['title'];
+	}
+
+	update_option( 'exf_acf_json_seen', $seen, false );
+	update_option( 'exf_acf_json_signature', $signature, false );
+
+	if ( $synced ) {
+		set_transient( 'exf_acf_synced_' . get_current_user_id(), $synced, MINUTE_IN_SECONDS );
+	}
+}
+
+/*
+ * When a field group is saved in the admin (e.g. on Local), ACF rewrites its JSON file.
+ * Record that version as already seen, so the auto-sync doesn't re-import it.
+ * Runs after ACF's own JSON writer (priority 10).
+ */
+add_action(
+	'acf/update_field_group',
+	function ( $field_group ) {
+		if ( empty( $field_group['key'] ) ) {
+			return;
+		}
+		$file = EXF_DIR . '/acf-json/' . $field_group['key'] . '.json';
+		if ( ! file_exists( $file ) ) {
+			return;
+		}
+		clearstatcache( true, $file );
+		$json = json_decode( (string) file_get_contents( $file ), true ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents
+		if ( ! empty( $json['modified'] ) ) {
+			$seen                         = (array) get_option( 'exf_acf_json_seen', array() );
+			$seen[ $field_group['key'] ] = (int) $json['modified'];
+			update_option( 'exf_acf_json_seen', $seen, false );
+		}
+	},
+	20
+);
+
+add_action(
+	'admin_notices',
+	function () {
+		$key    = 'exf_acf_synced_' . get_current_user_id();
+		$synced = get_transient( $key );
+		if ( $synced ) {
+			delete_transient( $key );
+			echo '<div class="notice notice-info is-dismissible"><p>' . esc_html(
+				/* translators: %s: field group titles */
+				sprintf( __( 'Field groups updated from the theme: %s', 'exfiles' ), implode( ', ', (array) $synced ) )
+			) . '</p></div>';
+		}
+	}
+);
+
 // Site Settings options page (footer, socials, contact recipient).
 add_action(
 	'acf/init',
